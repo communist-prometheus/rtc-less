@@ -79,7 +79,7 @@ jobs:
         run: bun install && bun run build
       - name: Deploy to Cloudflare Pages
         working-directory: packages/rtc-app
-        run: bunx wrangler pages deploy dist/client/ --project-name=rtc-app
+        run: bunx wrangler pages deploy dist/client/ --project-name=rtc-app --branch=main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -97,7 +97,7 @@ jobs:
         run: bun install && bun run build
       - name: Deploy to Cloudflare Pages
         working-directory: packages/rtc-dashboard
-        run: bunx wrangler pages deploy dist/ --project-name=rtc-dashboard
+        run: bunx wrangler pages deploy dist/ --project-name=rtc-dashboard --branch=main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
