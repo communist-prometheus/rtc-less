@@ -1,0 +1,251 @@
+networks:
+  public-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  nat-a-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.0.1.0/24
+  nat-b-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.0.2.0/24
+  nat-c-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.0.3.0/24
+
+services:
+  # -- Infrastructure --
+
+  signaling:
+    build:
+      context: ./signaling-echo
+      dockerfile: Dockerfile
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8787/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  turn:
+    build:
+      context: ./coturn
+      dockerfile: Dockerfile
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+    cap_add:
+      - NET_ADMIN
+
+  telemetry:
+    image: jaegertracing/all-in-one:1.65
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.12
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  # -- NAT Gateways --
+
+  nat-gw-a:
+    build:
+      context: ./nat-sim
+      dockerfile: Dockerfile.gateway
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      NAT_TYPE: full-cone
+      PUBLIC_IFACE: eth0
+      INTERNAL_IFACE: eth1
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.20
+      nat-a-internal:
+        ipv4_address: 10.0.1.1
+    depends_on:
+      signaling:
+        condition: service_healthy
+
+  nat-gw-b:
+    build:
+      context: ./nat-sim
+      dockerfile: Dockerfile.gateway
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      NAT_TYPE: symmetric
+      PUBLIC_IFACE: eth0
+      INTERNAL_IFACE: eth1
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.21
+      nat-b-internal:
+        ipv4_address: 10.0.2.1
+    depends_on:
+      signaling:
+        condition: service_healthy
+
+  nat-gw-c:
+    build:
+      context: ./nat-sim
+      dockerfile: Dockerfile.gateway
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      NAT_TYPE: port-restricted
+      PUBLIC_IFACE: eth0
+      INTERNAL_IFACE: eth1
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.22
+      nat-c-internal:
+        ipv4_address: 10.0.3.1
+    depends_on:
+      signaling:
+        condition: service_healthy
+
+  # -- Browser Peers --
+  # Each runs behind its NAT gateway
+  # Playwright test scripts run inside these containers
+
+  browser-a:
+    image: mcr.microsoft.com/playwright:v1.50.0-noble
+    networks:
+      nat-a-internal:
+        ipv4_address: 10.0.1.100
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 8.8.8.8
+    environment:
+      SIGNALING_URL: "ws://172.20.0.10:8787"
+      TURN_SERVER: "turn:172.20.0.11:3478"
+      TURN_SECRET: "rtc-less-e2e-test-secret"
+      PEER_ID: "browser-a"
+    entrypoint: >
+      bash -c "
+        ip route del default 2>/dev/null;
+        ip route add default via 10.0.1.1;
+        echo 'Gateway set to 10.0.1.1 (NAT-A)';
+        tail -f /dev/null
+      "
+    depends_on:
+      - nat-gw-a
+
+  browser-b:
+    image: mcr.microsoft.com/playwright:v1.50.0-noble
+    networks:
+      nat-b-internal:
+        ipv4_address: 10.0.2.100
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 8.8.8.8
+    environment:
+      SIGNALING_URL: "ws://172.20.0.10:8787"
+      TURN_SERVER: "turn:172.20.0.11:3478"
+      TURN_SECRET: "rtc-less-e2e-test-secret"
+      PEER_ID: "browser-b"
+    entrypoint: >
+      bash -c "
+        ip route del default 2>/dev/null;
+        ip route add default via 10.0.2.1;
+        echo 'Gateway set to 10.0.2.1 (NAT-B)';
+        tail -f /dev/null
+      "
+    depends_on:
+      - nat-gw-b
+
+  browser-c:
+    image: mcr.microsoft.com/playwright:v1.50.0-noble
+    networks:
+      nat-c-internal:
+        ipv4_address: 10.0.3.100
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 8.8.8.8
+    environment:
+      SIGNALING_URL: "ws://172.20.0.10:8787"
+      TURN_SERVER: "turn:172.20.0.11:3478"
+      TURN_SECRET: "rtc-less-e2e-test-secret"
+      PEER_ID: "browser-c"
+    entrypoint: >
+      bash -c "
+        ip route del default 2>/dev/null;
+        ip route add default via 10.0.3.1;
+        echo 'Gateway set to 10.0.3.1 (NAT-C)';
+        tail -f /dev/null
+      "
+    depends_on:
+      - nat-gw-c
+
+  # -- Test Orchestrator --
+  # Runs Playwright tests that connect to browser containers
+
+  test-runner:
+    image: mcr.microsoft.com/playwright:v1.50.0-noble
+    networks:
+      public-net:
+        ipv4_address: 172.20.0.30
+    working_dir: /tests
+    volumes:
+      - ../e2e:/tests
+    environment:
+      SIGNALING_URL: "http://172.20.0.10:8787"
+      SIGNALING_WS: "ws://172.20.0.10:8787"
+      TURN_SERVER: "172.20.0.11"
+      TURN_SECRET: "rtc-less-e2e-test-secret"
+      TELEMETRY_URL: "http://172.20.0.12:4318"
+      BROWSER_A_HOST: "10.0.1.100"
+      BROWSER_B_HOST: "10.0.2.100"
+      BROWSER_C_HOST: "10.0.3.100"
+    depends_on:
+      signaling:
+        condition: service_healthy
+      turn:
+        condition: service_started
+      telemetry:
+        condition: service_started
+      browser-a:
+        condition: service_started
+      browser-b:
+        condition: service_started
+      browser-c:
+        condition: service_started
+    entrypoint: >
+      bash -c "
+        cd /tests &&
+        npm install &&
+        npx playwright install chromium &&
+        npx playwright test --reporter=list
+      "

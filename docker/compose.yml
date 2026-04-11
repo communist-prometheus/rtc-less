@@ -1,0 +1,28 @@
+services:
+  signaling:
+    build:
+      context: ./signaling-echo
+      dockerfile: Dockerfile
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8787/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  turn:
+    build:
+      context: ./coturn
+      dockerfile: Dockerfile
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+
+  telemetry:
+    image: jaegertracing/all-in-one:1.65
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"

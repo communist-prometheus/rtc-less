@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WebRTC E2E Peer</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+    video { width: 320px; height: 240px; background: #222; }
+    #log { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflow-y: auto; }
+    .ok { color: #4f4; }
+    .err { color: #f44; }
+    .info { color: #4af; }
+  </style>
+</head>
+<body>
+  <h3 id="status">Initializing...</h3>
+  <div>
+    <video id="local" autoplay muted playsinline></video>
+    <video id="remote" autoplay playsinline></video>
+  </div>
+  <pre id="log"></pre>
+  <div id="ice-type" data-type=""></div>
+
+  <script>
+    const log = (msg, cls = 'info') => {
+      const el = document.getElementById('log')
+      const line = document.createElement('span')
+      line.className = cls
+      line.textContent = `[${new Date().toISOString().slice(11, 23)}] ${msg}\n`
+      el.appendChild(line)
+      el.scrollTop = el.scrollHeight
+      console.log(msg)
+    }
+
+    const setStatus = (text) => {
+      document.getElementById('status').textContent = text
+    }
+
+    const getParams = () => {
+      const p = new URLSearchParams(location.search)
+      return {
+        signalingUrl: p.get('signalingUrl') || 'ws://172.20.0.10:8787',
+        roomId: p.get('roomId') || 'test-room',
+        turnServer: p.get('turnServer') || 'turn:172.20.0.11:3478',
+        turnSecret: p.get('turnSecret') || 'rtc-less-e2e-test-secret',
+        turnUser: p.get('turnUser') || 'test',
+        turnCred: p.get('turnCred') || 'test',
+        useTurn: p.get('useTurn') !== 'false',
+      }
+    }
+
+    const run = async () => {
+      const params = getParams()
+      setStatus('Connecting to signaling...')
+      log(`Params: ${JSON.stringify(params)}`)
+
+      const iceServers = [{ urls: 'stun:172.20.0.11:3478' }]
+      if (params.useTurn) {
+        iceServers.push({
+          urls: params.turnServer,
+          username: params.turnUser,
+          credential: params.turnCred,
+        })
+      }
+
+      log(`ICE servers: ${JSON.stringify(iceServers)}`)
+
+      const pc = new RTCPeerConnection({ iceServers })
+      window.__pc = pc
+      window.__iceCandidates = []
+      window.__selectedCandidateType = null
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          const c = e.candidate
+          log(`ICE candidate: ${c.type} ${c.protocol} ${c.address}:${c.port}`)
+          window.__iceCandidates.push(c)
+          ws.send(JSON.stringify({
+            type: 'ice-candidate',
+            target: window.__remoteId,
+            candidate: c.candidate,
+            sdpMid: c.sdpMid,
+            sdpMLineIndex: c.sdpMLineIndex,
+          }))
+        }
+      }
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState
+        log(`ICE connection: ${state}`, state === 'connected' || state === 'completed' ? 'ok' : state === 'failed' ? 'err' : 'info')
+        setStatus(`ICE: ${state}`)
+
+        if (state === 'connected' || state === 'completed') {
+          pc.getStats().then(stats => {
+            stats.forEach(report => {
+              if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                const localId = report.localCandidateId
+                stats.forEach(s => {
+                  if (s.id === localId) {
+                    const type = s.candidateType
+                    log(`Selected candidate type: ${type}`, 'ok')
+                    document.getElementById('ice-type').dataset.type = type
+                    window.__selectedCandidateType = type
+                  }
+                })
+              }
+            })
+          })
+        }
+      }
+
+      pc.ontrack = (e) => {
+        log('Remote track received', 'ok')
+        document.getElementById('remote').srcObject = e.streams[0]
+      }
+
+      // Get local media (fake in Docker)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        })
+        document.getElementById('local').srcObject = stream
+        stream.getTracks().forEach(t => pc.addTrack(t, stream))
+        log('Local media acquired', 'ok')
+      } catch (err) {
+        log(`Media error: ${err.message}`, 'err')
+      }
+
+      // Connect to signaling
+      const wsUrl = `${params.signalingUrl}/ws/room/${params.roomId}`
+      log(`Connecting: ${wsUrl}`)
+      const ws = new WebSocket(wsUrl)
+      window.__ws = ws
+
+      let isPolite = false
+      let makingOffer = false
+
+      ws.onopen = () => {
+        log('Signaling connected', 'ok')
+        setStatus('Waiting for peer...')
+      }
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data)
+        log(`WS recv: ${msg.type}`)
+
+        if (msg.type === 'room-state') {
+          window.__userId = msg.userId
+          const others = msg.users.filter(u => u !== msg.userId)
+          isPolite = msg.users.indexOf(msg.userId) > 0
+          log(`User: ${msg.userId}, polite: ${isPolite}, peers: ${others.length}`)
+
+          if (others.length > 0) {
+            window.__remoteId = others[0]
+            // Impolite peer creates offer
+            if (!isPolite) {
+              makingOffer = true
+              const offer = await pc.createOffer()
+              await pc.setLocalDescription(offer)
+              ws.send(JSON.stringify({
+                type: 'offer',
+                target: window.__remoteId,
+                sdp: pc.localDescription.sdp,
+              }))
+              makingOffer = false
+              log('Offer sent')
+            }
+          }
+        }
+
+        if (msg.type === 'peer-joined') {
+          window.__remoteId = msg.userId
+          if (!isPolite) {
+            makingOffer = true
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+            ws.send(JSON.stringify({
+              type: 'offer',
+              target: msg.userId,
+              sdp: pc.localDescription.sdp,
+            }))
+            makingOffer = false
+            log('Offer sent to new peer')
+          }
+        }
+
+        if (msg.type === 'offer') {
+          const offerCollision = makingOffer || pc.signalingState !== 'stable'
+          if (offerCollision && !isPolite) {
+            log('Ignoring colliding offer (impolite)', 'info')
+            return
+          }
+
+          await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp })
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+          ws.send(JSON.stringify({
+            type: 'answer',
+            target: msg.from,
+            sdp: pc.localDescription.sdp,
+          }))
+          log('Answer sent')
+        }
+
+        if (msg.type === 'answer') {
+          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp })
+          log('Answer received')
+        }
+
+        if (msg.type === 'ice-candidate') {
+          try {
+            await pc.addIceCandidate({
+              candidate: msg.candidate,
+              sdpMid: msg.sdpMid,
+              sdpMLineIndex: msg.sdpMLineIndex,
+            })
+          } catch (err) {
+            if (!isPolite) log(`ICE add error: ${err.message}`, 'err')
+          }
+        }
+      }
+
+      ws.onerror = (e) => log(`WS error: ${e}`, 'err')
+      ws.onclose = () => log('WS closed', 'info')
+    }
+
+    run().catch(e => log(`Fatal: ${e.message}`, 'err'))
+  </script>
+</body>
+</html>
