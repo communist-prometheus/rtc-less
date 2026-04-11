@@ -49,8 +49,8 @@ services:
       public-net:
         ipv4_address: 172.20.0.11
     ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
+      - "33478:3478/udp"
+      - "33478:3478/tcp"
     cap_add:
       - NET_ADMIN
 
