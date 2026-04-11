@@ -55,7 +55,7 @@ services:
       - NET_ADMIN
 
   telemetry:
-    image: jaegertracing/all-in-one:1.65
+    image: jaegertracing/all-in-one:latest
     networks:
       public-net:
         ipv4_address: 172.20.0.12

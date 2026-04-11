@@ -16,11 +16,11 @@ services:
       context: ./coturn
       dockerfile: Dockerfile
     ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
+      - "33478:3478/udp"
+      - "33478:3478/tcp"
 
   telemetry:
-    image: jaegertracing/all-in-one:1.65
+    image: jaegertracing/all-in-one:latest
     ports:
       - "16686:16686"
       - "4318:4318"
