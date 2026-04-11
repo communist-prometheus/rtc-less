@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const currentDir = dirname(fileURLToPath(import.meta.url))
 
 const SIGNALING_URL =
   process.env.SIGNALING_URL ?? 'http://localhost:8787'
@@ -12,7 +15,7 @@ const TURN_SECRET =
   process.env.TURN_SECRET ?? 'rtc-less-e2e-test-secret'
 
 const peerPageContent = readFileSync(
-  resolve(__dirname, '../fixtures/webrtc-peer.html'),
+  resolve(currentDir, '../fixtures/webrtc-peer.html'),
   'utf-8'
 )
 
