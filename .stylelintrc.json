@@ -1,0 +1,27 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "ignoreFiles": ["dist/**/*", "node_modules/**/*"],
+  "rules": {
+    "max-nesting-depth": 3,
+    "selector-max-compound-selectors": 3,
+    "selector-max-specificity": "0,3,0",
+    "selector-no-qualifying-type": [
+      true,
+      { "ignore": ["attribute"] }
+    ],
+    "selector-class-pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+    "selector-pseudo-element-colon-notation": "double",
+    "declaration-block-no-redundant-longhand-properties": true,
+    "shorthand-property-no-redundant-values": true,
+    "declaration-block-single-line-max-declarations": 1,
+    "declaration-no-important": true,
+    "color-named": "never",
+    "color-hex-length": "short",
+    "color-function-notation": "modern",
+    "alpha-value-notation": "percentage",
+    "font-weight-notation": "numeric",
+    "length-zero-no-unit": true,
+    "no-duplicate-selectors": true,
+    "custom-property-pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+  }
+}

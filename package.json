@@ -1,0 +1,29 @@
+{
+  "name": "rtc-less",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "lint:biome": "biome ci .",
+    "lint:oxlint": "oxlint --config .oxlintrc.json",
+    "lint:css": "stylelint \"**/*.css\"",
+    "test": "turbo test",
+    "test:e2e": "turbo test:e2e",
+    "type-check": "turbo type-check",
+    "validate": "bun run type-check && bun run lint && bun run test",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.2",
+    "oxlint": "^0.16.0",
+    "stylelint": "^16.0.0",
+    "stylelint-config-standard": "^37.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

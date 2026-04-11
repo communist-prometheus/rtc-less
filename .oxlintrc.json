@@ -1,0 +1,60 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
+  "env": {
+    "browser": true
+  },
+  "categories": {
+    "correctness": "error"
+  },
+  "jsPlugins": ["eslint-plugin-sonarjs"],
+  "rules": {
+    "no-console": "error",
+    "no-inline-comments": "error",
+    "no-warning-comments": "error",
+    "typescript/explicit-member-accessibility": [
+      "error",
+      { "accessibility": "explicit" }
+    ],
+    "sonarjs/cognitive-complexity": ["error", 15],
+    "sonarjs/no-duplicate-string": ["error", { "threshold": 3 }],
+    "sonarjs/no-identical-functions": "error",
+    "sonarjs/no-redundant-boolean": "error",
+    "sonarjs/no-unused-collection": "error",
+    "sonarjs/no-use-of-empty-return-value": "error",
+    "sonarjs/prefer-immediate-return": "error",
+    "sonarjs/prefer-object-literal": "error",
+    "sonarjs/prefer-single-boolean-return": "error",
+    "sonarjs/max-lines": ["error", { "maximum": 50 }],
+    "sonarjs/max-lines-per-function": ["error", { "maximum": 25 }]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.spec.ts", "e2e/**/*.ts"],
+      "rules": {
+        "sonarjs/max-lines": "off",
+        "sonarjs/max-lines-per-function": "off",
+        "sonarjs/no-duplicate-string": "off"
+      }
+    },
+    {
+      "files": ["scripts/**/*.ts", "docker/**/*.ts"],
+      "rules": {
+        "no-console": "off",
+        "sonarjs/max-lines": "off",
+        "sonarjs/max-lines-per-function": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "playwright-report",
+    "test-results"
+  ]
+}

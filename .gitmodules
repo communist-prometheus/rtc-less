@@ -1,0 +1,21 @@
+[submodule "packages/rtc-shared"]
+	path = packages/rtc-shared
+	url = https://github.com/communist-prometheus/rtc-shared.git
+[submodule "packages/rtc-signal"]
+	path = packages/rtc-signal
+	url = https://github.com/communist-prometheus/rtc-signal.git
+[submodule "packages/rtc-turn-creds"]
+	path = packages/rtc-turn-creds
+	url = https://github.com/communist-prometheus/rtc-turn-creds.git
+[submodule "packages/rtc-telemetry"]
+	path = packages/rtc-telemetry
+	url = https://github.com/communist-prometheus/rtc-telemetry.git
+[submodule "packages/rtc-components"]
+	path = packages/rtc-components
+	url = https://github.com/communist-prometheus/rtc-components.git
+[submodule "packages/rtc-app"]
+	path = packages/rtc-app
+	url = https://github.com/communist-prometheus/rtc-app.git
+[submodule "packages/rtc-dashboard"]
+	path = packages/rtc-dashboard
+	url = https://github.com/communist-prometheus/rtc-dashboard.git
