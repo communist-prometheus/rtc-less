@@ -562,7 +562,7 @@ test.describe('WebRTC Video Call', () => {
   )
 
   test(
-    'debug log button hidden by default, visible with ?debug=1',
+    'log button is always visible and toggles the log panel',
     async ({ browser }) => {
       const roomId = await createRoom()
 
@@ -570,48 +570,631 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const page = await ctx.newPage()
-
-      // Without ?debug=1 — hidden
       await enterRoom(
         page,
         `${APP_URL}/room/${roomId}`,
         'Tester'
       )
       await waitForLog(page, 'Signaling connected')
-      await expect(
-        page.locator('#btn-log')
-      ).toBeHidden()
 
-      await ctx.close()
-
-      // With ?debug=1 — visible and toggles log panel
-      const roomId2 = await createRoom()
-      const ctx2 = await browser.newContext({
-        permissions: ['camera', 'microphone'],
-      })
-      const page2 = await ctx2.newPage()
-      await enterRoom(
-        page2,
-        `${APP_URL}/room/${roomId2}?debug=1`,
-        'Tester'
-      )
-      await waitForLog(page2, 'Signaling connected')
-
-      const logBtn = page2.locator('#btn-log')
+      const logBtn = page.locator('#btn-log')
       await expect(logBtn).toBeVisible()
+      await expect(logBtn).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+Shift+L'
+      )
 
-      const logPanel = page2.locator('#log-panel')
+      const logPanel = page.locator('#log-panel')
       await expect(logPanel).toHaveClass(/hidden/)
 
       await logBtn.click({ force: true })
-      await expect(logPanel).not.toHaveClass(
+      await expect(logPanel).not.toHaveClass(/hidden/)
+      await expect(logBtn).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+
+      await logBtn.click({ force: true })
+      await expect(logPanel).toHaveClass(/hidden/)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'header logo flush left, theme toggle flush right',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1920, height: 1080 },
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+
+      const logo = page.locator('body > header .logo')
+      const themeBtn = page.locator(
+        'body > header [data-theme-toggle]'
+      )
+
+      const logoBox = await logo.boundingBox()
+      const themeBox = await themeBtn.boundingBox()
+      if (!logoBox || !themeBox) throw new Error('no box')
+
+      // Compare against the nav's own bounding box so scrollbar-gutter
+      // is accounted for. Assert logo/theme sit against the nav's own
+      // padding, not indented by a 1200px max-width container.
+      const metrics = await page.evaluate(() => {
+        const nav = document.querySelector(
+          'body > header nav'
+        )
+        if (!nav) return null
+        const r = nav.getBoundingClientRect()
+        const s = getComputedStyle(nav)
+        return {
+          navLeft: r.left,
+          navRight: r.right,
+          padLeft: Number.parseFloat(s.paddingInlineStart),
+          padRight: Number.parseFloat(s.paddingInlineEnd),
+        }
+      })
+      if (!metrics) throw new Error('no metrics')
+
+      expect(logoBox.x - metrics.navLeft).toBeLessThanOrEqual(
+        metrics.padLeft + 2
+      )
+      expect(
+        metrics.navRight - (themeBox.x + themeBox.width)
+      ).toBeLessThanOrEqual(metrics.padRight + 2)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'chat panel top aligns with header bottom',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1280, height: 800 },
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      await page.locator('#btn-chat').click({ force: true })
+      const chat = page.locator('#chat-panel')
+      await expect(chat).not.toHaveClass(/hidden/)
+
+      const headerBox = await page
+        .locator('body > header')
+        .boundingBox()
+      const chatBox = await chat.boundingBox()
+      if (!headerBox || !chatBox) throw new Error('no box')
+
+      // Chat panel must not overlap the header. Hardcoded `top: 60px`
+      // with a taller header causes the panel to visually slip behind
+      // the header — this assertion catches that.
+      const headerBottom = headerBox.y + headerBox.height
+      expect(chatBox.y).toBeGreaterThanOrEqual(headerBottom - 1)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'theme toggle changes video and chat panel backgrounds',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const page = await ctx.newPage()
+      // Pin light theme first so the toggle transitions to dark.
+      await page.addInitScript(() => {
+        localStorage.setItem('theme', 'light')
+      })
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+      await page.locator('#btn-chat').click({ force: true })
+      await expect(page.locator('#chat-panel')).not.toHaveClass(
         /hidden/
       )
 
-      await logBtn.click({ force: true })
+      const readBackgrounds = () =>
+        page.evaluate(() => {
+          const video = document.querySelector(
+            '#video-area'
+          ) as HTMLElement | null
+          const panel = document.querySelector(
+            '#chat-panel'
+          ) as HTMLElement | null
+          if (!video || !panel) return null
+          return {
+            video: getComputedStyle(video).backgroundColor,
+            panel: getComputedStyle(panel).backgroundColor,
+          }
+        })
+
+      const before = await readBackgrounds()
+      if (!before) throw new Error('no before')
+
+      await page
+        .locator('body > header [data-theme-toggle]')
+        .click({ force: true })
+
+      // Wait for BOTH backgrounds to change from the PRE-toggle values.
+      // Comparing post-to-post would silently hang if values happened to
+      // be equal to each other.
+      await page.waitForFunction(
+        b => {
+          const v = document.querySelector(
+            '#video-area'
+          ) as HTMLElement | null
+          const p = document.querySelector(
+            '#chat-panel'
+          ) as HTMLElement | null
+          if (!v || !p) return false
+          const nowV = getComputedStyle(v).backgroundColor
+          const nowP = getComputedStyle(p).backgroundColor
+          return nowV !== b.video && nowP !== b.panel
+        },
+        before,
+        { timeout: 5000 }
+      )
+
+      const after = await readBackgrounds()
+      if (!after) throw new Error('no after')
+      expect(after.video).not.toBe(before.video)
+      expect(after.panel).not.toBe(before.panel)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'Ctrl+Shift+L toggles log panel and is guarded from input focus',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const logPanel = page.locator('#log-panel')
       await expect(logPanel).toHaveClass(/hidden/)
 
-      await ctx2.close()
+      await page.locator('body').click()
+      await page.keyboard.press('Control+Shift+KeyL')
+      await expect(logPanel).not.toHaveClass(/hidden/)
+      await expect(
+        page.locator('#btn-log')
+      ).toHaveAttribute('aria-pressed', 'true')
+
+      // Second press toggles off.
+      await page.keyboard.press('Control+Shift+KeyL')
+      await expect(logPanel).toHaveClass(/hidden/)
+
+      // Open chat, focus its input, then press the shortcut — it must
+      // NOT fire (guarded against input-focus typing hijack).
+      await page.locator('#btn-chat').click({ force: true })
+      await page.locator('#chat-input').fill('hi')
+      await page.locator('#chat-input').press('Control+Shift+KeyL')
+      await expect(logPanel).toHaveClass(/hidden/)
+      // Chat input still has the text — shortcut didn't intercept.
+      await expect(page.locator('#chat-input')).toHaveValue('hi')
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'screen share button swaps local video track and restores on toggle off',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+
+      // Stub getDisplayMedia with a canvas-based MediaStream so the test
+      // is deterministic — Chromium's --auto-select-desktop-capture-source
+      // captures the real desktop which is flaky in CI. Also spy on
+      // RTCRtpSender.replaceTrack to prove peers actually got the swap.
+      await ctx.addInitScript(() => {
+        const origGet =
+          navigator.mediaDevices.getUserMedia.bind(
+            navigator.mediaDevices
+          )
+        const w = globalThis as Record<string, unknown>
+        w.__cameraTrackId = ''
+        w.__replaceTrackCalls = [] as Array<string>
+        const origReplace =
+          RTCRtpSender.prototype.replaceTrack
+        RTCRtpSender.prototype.replaceTrack = function (
+          t: MediaStreamTrack | null
+        ) {
+          const arr = w.__replaceTrackCalls as Array<string>
+          arr.push(t?.id ?? 'null')
+          return origReplace.call(this, t)
+        }
+        navigator.mediaDevices.getUserMedia = async (
+          c?: MediaStreamConstraints
+        ) => {
+          const s = await origGet(c)
+          const v = s.getVideoTracks()[0]
+          if (v) w.__cameraTrackId = v.id
+          return s
+        }
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = 320
+          canvas.height = 240
+          const ctx2d = canvas.getContext('2d')
+          if (ctx2d) {
+            ctx2d.fillStyle = '#ff00ff'
+            ctx2d.fillRect(0, 0, 320, 240)
+          }
+          const c = canvas as HTMLCanvasElement & {
+            captureStream(fps?: number): MediaStream
+          }
+          const stream = c.captureStream(10)
+          w.__shareTrackId = stream.getVideoTracks()[0]?.id ?? ''
+          return stream
+        }
+      })
+
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const shareBtn = page.locator('#btn-share')
+      await expect(shareBtn).toBeVisible()
+      await expect(shareBtn).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+
+      await shareBtn.click({ force: true })
+      await waitForLog(page, 'Screen share started')
+      await expect(shareBtn).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+
+      // Local video's track must now be the screen track, not the camera.
+      const activeId = await page.evaluate(() => {
+        const v = document.querySelector(
+          '#local-video'
+        ) as HTMLVideoElement | null
+        const s = v?.srcObject as MediaStream | null
+        return s?.getVideoTracks()[0]?.id ?? ''
+      })
+      const shareId = await page.evaluate(
+        () =>
+          (globalThis as Record<string, unknown>)
+            .__shareTrackId as string
+      )
+      const camId = await page.evaluate(
+        () =>
+          (globalThis as Record<string, unknown>)
+            .__cameraTrackId as string
+      )
+      expect(activeId).toBe(shareId)
+      expect(activeId).not.toBe(camId)
+
+      // Toggle off — camera must come back.
+      await shareBtn.click({ force: true })
+      await waitForLog(page, 'Screen share stopped')
+      await expect(shareBtn).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+
+      const restoredId = await page.evaluate(() => {
+        const v = document.querySelector(
+          '#local-video'
+        ) as HTMLVideoElement | null
+        const s = v?.srcObject as MediaStream | null
+        return s?.getVideoTracks()[0]?.id ?? ''
+      })
+      expect(restoredId).toBe(camId)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'screen share replaces outgoing track for every peer and updates relay source',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const url = `${APP_URL}/room/${roomId}?forceRelay=1`
+
+      const installStubs = async (
+        context: import('@playwright/test').BrowserContext
+      ) => {
+        await context.addInitScript(() => {
+          const w = globalThis as Record<string, unknown>
+          w.__replaceTrackCalls = [] as Array<string>
+          const origReplace =
+            RTCRtpSender.prototype.replaceTrack
+          RTCRtpSender.prototype.replaceTrack = function (
+            t: MediaStreamTrack | null
+          ) {
+            const arr = w.__replaceTrackCalls as Array<string>
+            arr.push(t?.id ?? 'null')
+            return origReplace.call(this, t)
+          }
+          navigator.mediaDevices.getDisplayMedia = async () => {
+            const canvas = document.createElement('canvas')
+            canvas.width = 320
+            canvas.height = 240
+            const ctx2d = canvas.getContext('2d')
+            if (ctx2d) {
+              ctx2d.fillStyle = '#00ffff'
+              ctx2d.fillRect(0, 0, 320, 240)
+            }
+            const c = canvas as HTMLCanvasElement & {
+              captureStream(fps?: number): MediaStream
+            }
+            const stream = c.captureStream(10)
+            w.__shareTrackId =
+              stream.getVideoTracks()[0]?.id ?? ''
+            return stream
+          }
+        })
+      }
+
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      await installStubs(ctxA)
+      await installStubs(ctxB)
+
+      const pageA = await ctxA.newPage()
+      const pageB = await ctxB.newPage()
+
+      await enterRoom(pageA, url, 'Alice')
+      await waitForLog(pageA, 'Signaling connected')
+
+      await enterRoom(pageB, url, 'Bob')
+      await waitForLog(pageB, 'Signaling connected')
+
+      // Wait for Alice's relay session to Bob to activate.
+      await waitForLog(pageA, 'Relay active')
+
+      // Alice starts sharing. replaceTrack must be called on at
+      // least one sender with the new share track id.
+      await pageA.locator('#btn-share').click({ force: true })
+      await waitForLog(pageA, 'Screen share started')
+
+      const swap = await pageA.evaluate(() => {
+        const w = globalThis as Record<string, unknown>
+        return {
+          calls: w.__replaceTrackCalls as Array<string>,
+          shareId: w.__shareTrackId as string,
+        }
+      })
+      expect(swap.calls.length).toBeGreaterThanOrEqual(1)
+      expect(swap.calls).toContain(swap.shareId)
+
+      // The relay source-video for Bob's peer should now stream the
+      // share track. Scope the query to EXCLUDE #local-video so a
+      // local-only swap cannot green the test — we need to prove the
+      // relay's dedicated source <video> element picked up the new
+      // track, not just the self-preview.
+      const relayTrackId = await pageA.waitForFunction(
+        () => {
+          const videos = Array.from(
+            document.querySelectorAll('video')
+          ).filter(v => v.id !== 'local-video')
+          const shareId = (
+            globalThis as Record<string, unknown>
+          ).__shareTrackId as string
+          for (const v of videos) {
+            const s = v.srcObject as MediaStream | null
+            const t = s?.getVideoTracks()[0]
+            if (t && t.id === shareId) return t.id
+          }
+          return null
+        },
+        undefined,
+        { timeout: 5000 }
+      )
+      expect(await relayTrackId.jsonValue()).toBe(swap.shareId)
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
+
+  test(
+    'screen share button supports keyboard activation',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      await ctx.addInitScript(() => {
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = 320
+          canvas.height = 240
+          const c = canvas as HTMLCanvasElement & {
+            captureStream(fps?: number): MediaStream
+          }
+          return c.captureStream(10)
+        }
+      })
+
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const shareBtn = page.locator('#btn-share')
+      await shareBtn.focus()
+      await page.keyboard.press('Enter')
+      await waitForLog(page, 'Screen share started')
+      await expect(shareBtn).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+
+      await page.keyboard.press('Space')
+      await waitForLog(page, 'Screen share stopped')
+      await expect(shareBtn).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'screen share button remains unpressed when user cancels the picker',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      await ctx.addInitScript(() => {
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          throw new DOMException(
+            'User denied screen share',
+            'NotAllowedError'
+          )
+        }
+      })
+
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const camTrackIdBefore = await page.evaluate(() => {
+        const v = document.querySelector(
+          '#local-video'
+        ) as HTMLVideoElement | null
+        const s = v?.srcObject as MediaStream | null
+        return s?.getVideoTracks()[0]?.id ?? ''
+      })
+
+      await page.locator('#btn-share').click({ force: true })
+      // Await the async rejection path settling.
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('#btn-share')
+            ?.getAttribute('aria-pressed') === 'false'
+      )
+      await expect(
+        page.locator('#btn-share')
+      ).toHaveAttribute('aria-pressed', 'false')
+
+      // No 'Screen share started' log must have been written.
+      const hasStartedLog = await page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll('#log-entries li')
+        ).some(li =>
+          li.textContent?.includes('Screen share started')
+        )
+      )
+      expect(hasStartedLog).toBe(false)
+
+      // Camera track is still the active local video track.
+      const camTrackIdAfter = await page.evaluate(() => {
+        const v = document.querySelector(
+          '#local-video'
+        ) as HTMLVideoElement | null
+        const s = v?.srcObject as MediaStream | null
+        return s?.getVideoTracks()[0]?.id ?? ''
+      })
+      expect(camTrackIdAfter).toBe(camTrackIdBefore)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'screen share restores camera when display track ends from browser chrome',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+
+      await ctx.addInitScript(() => {
+        const origGet =
+          navigator.mediaDevices.getUserMedia.bind(
+            navigator.mediaDevices
+          )
+        const w = globalThis as Record<string, unknown>
+        navigator.mediaDevices.getUserMedia = async (
+          c?: MediaStreamConstraints
+        ) => {
+          const s = await origGet(c)
+          const v = s.getVideoTracks()[0]
+          if (v) w.__cameraTrackId = v.id
+          return s
+        }
+        navigator.mediaDevices.getDisplayMedia = async () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = 320
+          canvas.height = 240
+          const c = canvas as HTMLCanvasElement & {
+            captureStream(fps?: number): MediaStream
+          }
+          const stream = c.captureStream(10)
+          w.__shareStream = stream
+          return stream
+        }
+      })
+
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      await page.locator('#btn-share').click({ force: true })
+      await waitForLog(page, 'Screen share started')
+
+      // Simulate the user clicking "Stop sharing" in the browser chrome:
+      // fires the 'ended' event on the display track.
+      await page.evaluate(() => {
+        const s = (
+          globalThis as Record<string, unknown>
+        ).__shareStream as MediaStream
+        s.getVideoTracks()[0]?.stop()
+        // track.stop() fires 'ended' in the next microtask
+        s.getVideoTracks()[0]?.dispatchEvent(new Event('ended'))
+      })
+
+      await waitForLog(page, 'Screen share stopped')
+      await expect(
+        page.locator('#btn-share')
+      ).toHaveAttribute('aria-pressed', 'false')
+
+      await ctx.close()
     }
   )
 
