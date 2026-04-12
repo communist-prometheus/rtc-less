@@ -648,15 +648,20 @@ test.describe('Stability', () => {
         permissions: ['camera', 'microphone'],
       })
       // Stub the telemetry endpoint to capture every POST.
+      // __TELEMETRY_URL__ is set because the dev build defaults to
+      // "" (telemetry disabled) so the test harness doesn't flood
+      // the real collector — individual telemetry tests opt in.
       await ctx.addInitScript(() => {
         const w = globalThis as Record<string, unknown>
+        w.__TELEMETRY_URL__ = 'https://telemetry.stub.local'
         w.__telemetryPosts = [] as Array<{
           url: string
           body: unknown
         }>
         const origFetch = globalThis.fetch
         globalThis.fetch = async (input, init) => {
-          const url = typeof input === 'string' ? input : (input as Request).url
+          const url =
+            typeof input === 'string' ? input : (input as Request).url
           if (url.includes('telemetry') && init?.method === 'POST') {
             const arr = w.__telemetryPosts as Array<{
               url: string
@@ -729,6 +734,7 @@ test.describe('Stability', () => {
       ) => {
         await ctx.addInitScript(() => {
           const w = globalThis as Record<string, unknown>
+          w.__TELEMETRY_URL__ = 'https://telemetry.stub.local'
           w.__telemetryPosts = [] as Array<{
             url: string
             body: unknown
@@ -796,9 +802,11 @@ test.describe('Stability', () => {
       // sendBeacon (for the pagehide flush). Without the fetch stub,
       // trackUserConnect's await depends on the real telemetry host
       // and the connectionId may not be populated by the time we
-      // dispatch pagehide.
+      // dispatch pagehide. Telemetry is off-by-default in dev mode,
+      // so we re-enable it via __TELEMETRY_URL__.
       await ctx.addInitScript(() => {
         const w = globalThis as Record<string, unknown>
+        w.__TELEMETRY_URL__ = 'https://telemetry.stub.local'
         w.__beaconCalls = [] as Array<{ url: string }>
         const origFetch = globalThis.fetch
         globalThis.fetch = async (input, init) => {
