@@ -52,27 +52,10 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker images
-        working-directory: docker
-        run: docker compose -f compose.e2e.yml build signaling turn telemetry
-
-      - name: Start services
-        working-directory: docker
-        run: docker compose -f compose.e2e.yml up -d signaling turn telemetry
-
-      - name: Wait for signaling
-        working-directory: docker
-        run: |
-          for i in $(seq 1 20); do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' \
-              "$(docker compose -f compose.e2e.yml ps -q signaling)" 2>/dev/null || echo "starting")
-            [ "$STATUS" = "healthy" ] && break
-            sleep 3
-          done
-
       - uses: oven-sh/setup-bun@v2
+
+      - name: Install workspace deps
+        run: bun install
 
       - name: Install E2E deps
         working-directory: e2e
@@ -82,14 +65,31 @@ jobs:
         working-directory: e2e
         run: bunx playwright install --with-deps chromium
 
+      - name: Start signal server
+        working-directory: packages/rtc-signal
+        run: |
+          bun --hot src/dev.ts > /tmp/signal.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:8787/health
+
+      - name: Start rtc-app dev server
+        working-directory: packages/rtc-app
+        run: |
+          bun run dev > /tmp/app.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:4321/ > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:4321/ > /dev/null
+
       - name: Run E2E
         working-directory: e2e
         env:
+          APP_URL: http://localhost:4321
           SIGNALING_URL: http://localhost:8787
-          SIGNALING_WS: ws://localhost:8787
-          TURN_SERVER: localhost
-          TURN_SECRET: rtc-less-e2e-test-secret
-          TELEMETRY_URL: http://localhost:4318
         run: bunx playwright test --reporter=list
 
       - name: Upload report
@@ -100,7 +100,10 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 14
 
-      - name: Stop services
-        if: always()
-        working-directory: docker
-        run: docker compose -f compose.e2e.yml down --volumes --remove-orphans
+      - name: Dump server logs on failure
+        if: failure()
+        run: |
+          echo "=== signal.log ==="
+          cat /tmp/signal.log || true
+          echo "=== app.log ==="
+          cat /tmp/app.log || true
