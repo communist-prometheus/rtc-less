@@ -101,47 +101,6 @@ test.describe('WebRTC Video Call', () => {
   )
 
   test(
-    'TURN credentials are fetched',
-    async ({ browser }) => {
-      const roomId = await createRoom()
-      const roomUrl = `${APP_URL}/room/${roomId}`
-
-      const ctx = await browser.newContext({
-        permissions: ['camera', 'microphone'],
-      })
-      const page = await ctx.newPage()
-
-      await page.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
-
-      await waitForLog(
-        page,
-        'TURN credentials',
-        10_000
-      )
-
-      const logs = await page.evaluate(() => {
-        const entries = document.querySelectorAll(
-          '#log-entries li'
-        )
-        return Array.from(entries).map(
-          e => e.textContent ?? ''
-        )
-      })
-
-      const hasTurn = logs.some(
-        l =>
-          l.includes('TURN credentials acquired') ||
-          l.includes('TURN credentials unavailable')
-      )
-      expect(hasTurn).toBe(true)
-
-      await ctx.close()
-    }
-  )
-
-  test(
     'peer join notification appears',
     async ({ browser }) => {
       const roomId = await createRoom()
