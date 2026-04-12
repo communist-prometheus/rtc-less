@@ -12,6 +12,8 @@
     "lint": {
       "dependsOn": ["^build"]
     },
+    "lint:compat": {},
+    "lint:compat:self-test": {},
     "test": {
       "dependsOn": ["build"]
     },

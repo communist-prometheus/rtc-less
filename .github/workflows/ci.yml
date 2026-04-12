@@ -35,6 +35,12 @@ jobs:
       - name: Lint
         run: bunx turbo lint
 
+      - name: Baseline browser-compat lint (self-test)
+        run: bunx turbo lint:compat:self-test
+
+      - name: Baseline browser-compat lint
+        run: bunx turbo lint:compat
+
       - name: Type-check
         run: bunx turbo type-check
 
