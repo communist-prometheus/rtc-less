@@ -640,6 +640,221 @@ test.describe('Stability', () => {
   )
 
   test(
+    'telemetry: room.session.start and user.connect spans are sent on join',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      // Stub the telemetry endpoint to capture every POST.
+      await ctx.addInitScript(() => {
+        const w = globalThis as Record<string, unknown>
+        w.__telemetryPosts = [] as Array<{
+          url: string
+          body: unknown
+        }>
+        const origFetch = globalThis.fetch
+        globalThis.fetch = async (input, init) => {
+          const url = typeof input === 'string' ? input : (input as Request).url
+          if (url.includes('telemetry') && init?.method === 'POST') {
+            const arr = w.__telemetryPosts as Array<{
+              url: string
+              body: unknown
+            }>
+            try {
+              arr.push({ url, body: JSON.parse(String(init.body)) })
+            } catch {
+              arr.push({ url, body: null })
+            }
+            return new Response('{}', { status: 200 })
+          }
+          return origFetch(input, init)
+        }
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'TelemetryAlice')
+      await waitForLog(page, 'Signaling connected')
+
+      // Wait for both expected spans to be queued.
+      await page.waitForFunction(
+        () => {
+          const w = globalThis as Record<string, unknown>
+          const posts = (w.__telemetryPosts as Array<{
+            body: { spans?: Array<{ name: string }> }
+          }>) ?? []
+          const spanNames = posts.flatMap(p => p.body?.spans ?? []).map(s => s.name)
+          return (
+            spanNames.includes('room.session.start') &&
+            spanNames.includes('user.connect')
+          )
+        },
+        undefined,
+        { timeout: 15_000 }
+      )
+
+      const summary = await page.evaluate(() => {
+        const w = globalThis as Record<string, unknown>
+        const posts = (w.__telemetryPosts as Array<{
+          url: string
+          body: { spans?: Array<{ name: string; spanId: string; attributes: Record<string, unknown> }> }
+        }>) ?? []
+        const allSpans = posts.flatMap(p => p.body?.spans ?? [])
+        const start = allSpans.find(s => s.name === 'room.session.start')
+        const connect = allSpans.find(s => s.name === 'user.connect')
+        return { start, connect }
+      })
+      expect(summary.start?.spanId).toBe(roomId)
+      expect(summary.start?.attributes['room.id']).toBe(roomId)
+      expect(summary.connect?.attributes['session.id']).toBe(roomId)
+      expect(summary.connect?.attributes['nickname']).toBe('TelemetryAlice')
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'telemetry: ICE event spans fire when peers connect',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const installStub = async (
+        ctx: import('@playwright/test').BrowserContext
+      ) => {
+        await ctx.addInitScript(() => {
+          const w = globalThis as Record<string, unknown>
+          w.__telemetryPosts = [] as Array<{
+            url: string
+            body: unknown
+          }>
+          const origFetch = globalThis.fetch
+          globalThis.fetch = async (input, init) => {
+            const url =
+              typeof input === 'string'
+                ? input
+                : (input as Request).url
+            if (url.includes('telemetry') && init?.method === 'POST') {
+              const arr = w.__telemetryPosts as Array<{
+                url: string
+                body: unknown
+              }>
+              try {
+                arr.push({ url, body: JSON.parse(String(init.body)) })
+              } catch {
+                arr.push({ url, body: null })
+              }
+              return new Response('{}', { status: 200 })
+            }
+            return origFetch(input, init)
+          }
+        })
+      }
+      await installStub(ctxA)
+      await installStub(ctxB)
+      const pageA = await ctxA.newPage()
+      const pageB = await ctxB.newPage()
+      await enterRoom(pageA, roomUrl, 'Alice')
+      await waitForLog(pageA, 'Signaling connected')
+      await enterRoom(pageB, roomUrl, 'Bob')
+      await waitForLog(pageB, 'Signaling connected')
+
+      // Wait until at least one ice.event span lands.
+      await pageA.waitForFunction(
+        () => {
+          const w = globalThis as Record<string, unknown>
+          const posts = (w.__telemetryPosts as Array<{
+            body: { spans?: Array<{ name: string }> }
+          }>) ?? []
+          return posts
+            .flatMap(p => p.body?.spans ?? [])
+            .some(s => s.name === 'ice.event')
+        },
+        undefined,
+        { timeout: 30_000 }
+      )
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
+
+  test(
+    'telemetry: pagehide flushes user.disconnect + room.session.end via beacon',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      // Stub both fetch (for the initial start/connect spans) and
+      // sendBeacon (for the pagehide flush). Without the fetch stub,
+      // trackUserConnect's await depends on the real telemetry host
+      // and the connectionId may not be populated by the time we
+      // dispatch pagehide.
+      await ctx.addInitScript(() => {
+        const w = globalThis as Record<string, unknown>
+        w.__beaconCalls = [] as Array<{ url: string }>
+        const origFetch = globalThis.fetch
+        globalThis.fetch = async (input, init) => {
+          const url =
+            typeof input === 'string' ? input : (input as Request).url
+          if (url.includes('telemetry') && init?.method === 'POST') {
+            return new Response('{}', { status: 200 })
+          }
+          return origFetch(input, init)
+        }
+        const orig = navigator.sendBeacon.bind(navigator)
+        navigator.sendBeacon = (url, data) => {
+          const arr = w.__beaconCalls as Array<{ url: string }>
+          arr.push({ url: url.toString() })
+          return orig(url, data)
+        }
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Beaconer')
+      // Wait until telemetryConnectionId is populated, which only
+      // happens AFTER trackUserConnect's awaited fetch completes.
+      // Otherwise pagehide would only flush the session-end beacon.
+      await page.waitForFunction(
+        () => {
+          const rtc = (globalThis as Record<string, unknown>)
+            .__rtc as { telemetryConnectionId?: string }
+          return Boolean(rtc?.telemetryConnectionId)
+        },
+        undefined,
+        { timeout: 15_000 }
+      )
+
+      await page.evaluate(() => {
+        globalThis.dispatchEvent(new Event('pagehide'))
+      })
+
+      await page.waitForFunction(
+        () => {
+          const w = globalThis as Record<string, unknown>
+          const calls = (w.__beaconCalls as Array<{
+            url: string
+          }>) ?? []
+          const traceCalls = calls.filter(c =>
+            c.url.includes('/v1/traces')
+          )
+          return traceCalls.length >= 2
+        },
+        undefined,
+        { timeout: 5_000 }
+      )
+
+      await ctx.close()
+    }
+  )
+
+  test(
     'connection status badge reflects state transitions',
     async ({ browser }) => {
       const roomId = await createRoom()
