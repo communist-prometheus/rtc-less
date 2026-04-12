@@ -326,33 +326,56 @@ test.describe('WebRTC Video Call', () => {
   )
 
   test(
-    'log panel toggles as overlay',
+    'debug log button hidden by default, visible with ?debug=1',
     async ({ browser }) => {
       const roomId = await createRoom()
-      const roomUrl = `${APP_URL}/room/${roomId}`
 
       const ctx = await browser.newContext({
         permissions: ['camera', 'microphone'],
       })
       const page = await ctx.newPage()
-      await enterRoom(page, roomUrl, 'Tester')
-      await waitForLog(
-        page,
-        'Signaling connected'
-      )
 
-      const logPanel = page.locator('#log-panel')
+      // Without ?debug=1 — hidden
+      await enterRoom(
+        page,
+        `${APP_URL}/room/${roomId}`,
+        'Tester'
+      )
+      await waitForLog(page, 'Signaling connected')
+      await expect(
+        page.locator('#btn-log')
+      ).toBeHidden()
+
+      await ctx.close()
+
+      // With ?debug=1 — visible and toggles log panel
+      const roomId2 = await createRoom()
+      const ctx2 = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const page2 = await ctx2.newPage()
+      await enterRoom(
+        page2,
+        `${APP_URL}/room/${roomId2}?debug=1`,
+        'Tester'
+      )
+      await waitForLog(page2, 'Signaling connected')
+
+      const logBtn = page2.locator('#btn-log')
+      await expect(logBtn).toBeVisible()
+
+      const logPanel = page2.locator('#log-panel')
       await expect(logPanel).toHaveClass(/hidden/)
 
-      await page.click('#btn-log', { force: true })
+      await logBtn.click({ force: true })
       await expect(logPanel).not.toHaveClass(
         /hidden/
       )
 
-      await page.click('#btn-log', { force: true })
+      await logBtn.click({ force: true })
       await expect(logPanel).toHaveClass(/hidden/)
 
-      await ctx.close()
+      await ctx2.close()
     }
   )
 
