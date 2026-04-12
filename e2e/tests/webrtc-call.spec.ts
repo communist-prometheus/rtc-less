@@ -279,6 +279,242 @@ test.describe('WebRTC Video Call', () => {
   )
 
   test(
+    'self-view drag tracks cursor 1:1 (no jump)',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1200, height: 800 },
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const selfView = page.locator('#self-view')
+      await selfView.waitFor({ state: 'visible' })
+
+      const startBox = await selfView.boundingBox()
+      if (!startBox) throw new Error('no box')
+
+      // Grab near the top-left of the element so we can observe
+      // any implicit offset mis-computation in the drag math.
+      const grabX = startBox.x + 20
+      const grabY = startBox.y + 20
+      const dropX = grabX - 300
+      const dropY = grabY - 200
+
+      await page.mouse.move(grabX, grabY)
+      await page.mouse.down()
+      // Intermediate move so a mid-drag jump is observable.
+      await page.mouse.move(grabX - 10, grabY - 10, { steps: 3 })
+
+      const midBox = await selfView.boundingBox()
+      if (!midBox) throw new Error('no mid box')
+
+      // After a 10px move, the element should also have moved ~10px.
+      // A broken startDrag offset causes a jump of parentRect.top (~60px)
+      // on the very first move — catch that with a tight tolerance.
+      expect(Math.abs(midBox.x - (startBox.x - 10))).toBeLessThanOrEqual(2)
+      expect(Math.abs(midBox.y - (startBox.y - 10))).toBeLessThanOrEqual(2)
+
+      await page.mouse.move(dropX, dropY, { steps: 10 })
+      await page.mouse.up()
+
+      const endBox = await selfView.boundingBox()
+      if (!endBox) throw new Error('no end box')
+
+      // Total movement should match the cursor delta exactly (modulo clamping).
+      expect(Math.abs(endBox.x - (startBox.x - 300))).toBeLessThanOrEqual(2)
+      expect(Math.abs(endBox.y - (startBox.y - 200))).toBeLessThanOrEqual(2)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'self-view drag clamps at container edges',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1200, height: 800 },
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const selfView = page.locator('#self-view')
+      await selfView.waitFor({ state: 'visible' })
+      const videoArea = page.locator('#video-area')
+
+      const startBox = await selfView.boundingBox()
+      const parentBox = await videoArea.boundingBox()
+      if (!startBox || !parentBox) throw new Error('no box')
+
+      // Drag way past the top-left; element must clamp to parent's 0,0.
+      await page.mouse.move(startBox.x + 20, startBox.y + 20)
+      await page.mouse.down()
+      await page.mouse.move(-9999, -9999, { steps: 5 })
+      await page.mouse.up()
+
+      const topLeftBox = await selfView.boundingBox()
+      if (!topLeftBox) throw new Error('no topleft box')
+      expect(Math.abs(topLeftBox.x - parentBox.x)).toBeLessThanOrEqual(2)
+      expect(Math.abs(topLeftBox.y - parentBox.y)).toBeLessThanOrEqual(2)
+
+      // Drag way past the bottom-right.
+      await page.mouse.move(topLeftBox.x + 20, topLeftBox.y + 20)
+      await page.mouse.down()
+      await page.mouse.move(9999, 9999, { steps: 5 })
+      await page.mouse.up()
+
+      const bottomRightBox = await selfView.boundingBox()
+      if (!bottomRightBox) throw new Error('no br box')
+      const maxX = parentBox.x + parentBox.width - bottomRightBox.width
+      const maxY = parentBox.y + parentBox.height - bottomRightBox.height
+      expect(Math.abs(bottomRightBox.x - maxX)).toBeLessThanOrEqual(2)
+      expect(Math.abs(bottomRightBox.y - maxY)).toBeLessThanOrEqual(2)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'self-view drag works across multiple cycles',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1200, height: 800 },
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const selfView = page.locator('#self-view')
+      await selfView.waitFor({ state: 'visible' })
+
+      // First drag: -200,-150.
+      const box1 = await selfView.boundingBox()
+      if (!box1) throw new Error('no box1')
+      await page.mouse.move(box1.x + 30, box1.y + 30)
+      await page.mouse.down()
+      await page.mouse.move(box1.x + 30 - 200, box1.y + 30 - 150, { steps: 10 })
+      await page.mouse.up()
+
+      const box2 = await selfView.boundingBox()
+      if (!box2) throw new Error('no box2')
+      expect(Math.abs(box2.x - (box1.x - 200))).toBeLessThanOrEqual(2)
+      expect(Math.abs(box2.y - (box1.y - 150))).toBeLessThanOrEqual(2)
+
+      // Second drag: +100,+80. Must use the new baseline, not cached
+      // startDrag offset from the first cycle.
+      await page.mouse.move(box2.x + 40, box2.y + 40)
+      await page.mouse.down()
+      await page.mouse.move(box2.x + 40 + 100, box2.y + 40 + 80, { steps: 10 })
+      await page.mouse.up()
+
+      const box3 = await selfView.boundingBox()
+      if (!box3) throw new Error('no box3')
+      expect(Math.abs(box3.x - (box2.x + 100))).toBeLessThanOrEqual(2)
+      expect(Math.abs(box3.y - (box2.y + 80))).toBeLessThanOrEqual(2)
+
+      await ctx.close()
+    }
+  )
+
+  test(
+    'self-view drag works via touch on mobile viewport',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctx = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+      })
+      const page = await ctx.newPage()
+      await enterRoom(page, roomUrl, 'Tester')
+      await waitForLog(page, 'Camera acquired')
+
+      const selfView = page.locator('#self-view')
+      await selfView.waitFor({ state: 'visible' })
+
+      const startBox = await selfView.boundingBox()
+      if (!startBox) throw new Error('no startBox')
+
+      // Dispatch real touch events through the element since Playwright's
+      // touchscreen.tap does not drive touchmove between press and release.
+      const grabX = Math.round(startBox.x + 20)
+      const grabY = Math.round(startBox.y + 20)
+      const targetX = Math.round(startBox.x + 20 - 80)
+      const targetY = Math.round(startBox.y + 20 - 120)
+
+      await page.evaluate(
+        ([sx, sy, tx, ty]) => {
+          const el = document.querySelector(
+            '#self-view'
+          ) as HTMLElement | null
+          if (!el) throw new Error('no self-view')
+          const makeTouch = (x: number, y: number): Touch =>
+            new Touch({
+              identifier: 1,
+              target: el,
+              clientX: x,
+              clientY: y,
+              pageX: x,
+              pageY: y,
+              screenX: x,
+              screenY: y,
+              radiusX: 1,
+              radiusY: 1,
+              rotationAngle: 0,
+              force: 1,
+            })
+          const fire = (
+            type: 'touchstart' | 'touchmove' | 'touchend',
+            touches: ReadonlyArray<Touch>,
+            target: EventTarget
+          ) => {
+            const e = new TouchEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              touches,
+              targetTouches: touches,
+              changedTouches: touches,
+            })
+            target.dispatchEvent(e)
+          }
+          fire('touchstart', [makeTouch(sx, sy)], el)
+          const steps = 10
+          for (let i = 1; i <= steps; i++) {
+            const x = sx + ((tx - sx) * i) / steps
+            const y = sy + ((ty - sy) * i) / steps
+            fire('touchmove', [makeTouch(x, y)], document)
+          }
+          fire('touchend', [], document)
+        },
+        [grabX, grabY, targetX, targetY]
+      )
+
+      const endBox = await selfView.boundingBox()
+      if (!endBox) throw new Error('no endBox')
+      expect(Math.abs(endBox.x - (startBox.x - 80))).toBeLessThanOrEqual(2)
+      expect(Math.abs(endBox.y - (startBox.y - 120))).toBeLessThanOrEqual(2)
+
+      await ctx.close()
+    }
+  )
+
+  test(
     'chat messages exchange',
     async ({ browser }) => {
       const roomId = await createRoom()
