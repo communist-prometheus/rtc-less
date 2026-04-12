@@ -137,4 +137,65 @@ test.describe('WS Media Relay Path', () => {
       await ctxB.close()
     }
   )
+
+  test(
+    'audio samples flow through WS relay',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const url = `${APP_URL}/room/${roomId}?forceRelay=1`
+
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+
+      const pageA = await ctxA.newPage()
+      const pageB = await ctxB.newPage()
+
+      // Count binary WS messages with audio type byte
+      await pageA.addInitScript(() => {
+        const g = globalThis as Record<string, unknown>
+        g.__audioSent = 0
+        g.__audioReceived = 0
+        const orig = WebSocket.prototype.send
+        WebSocket.prototype.send = function (data) {
+          if (data instanceof ArrayBuffer && data.byteLength > 37) {
+            const type = new Uint8Array(data, 36, 1)[0]
+            if (type === 0x61) g.__audioSent = (g.__audioSent as number) + 1
+          }
+          return orig.call(this, data as Parameters<typeof orig>[0])
+        }
+      })
+
+      await pageA.goto(url, {
+        waitUntil: 'domcontentloaded',
+      })
+      await pageB.goto(url, {
+        waitUntil: 'domcontentloaded',
+      })
+
+      await waitForLog(pageA, 'Relay active')
+      await waitForLog(pageB, 'Relay active')
+
+      // Wait for some audio samples to flow
+      await pageA.waitForFunction(
+        () => {
+          const g = globalThis as Record<string, unknown>
+          return (g.__audioSent as number) > 5
+        },
+        undefined,
+        { timeout: 10_000 }
+      )
+
+      const audioSent = await pageA.evaluate(
+        () => (globalThis as Record<string, unknown>).__audioSent
+      )
+      expect(audioSent).toBeGreaterThan(5)
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
 })
