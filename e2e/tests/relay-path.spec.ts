@@ -98,40 +98,193 @@ test.describe('WS Media Relay Path', () => {
       )
 
       // Verify canvas is rendering frames
-      const canvasFramesA = await pageA.evaluate(
+      await pageA.waitForFunction(
         () => {
-          const c = document.querySelector(
-            '.remote-peer canvas'
-          ) as HTMLCanvasElement | null
-          if (!c) return 0
-          const ctx = c.getContext('2d')
-          if (!ctx) return 0
-          const data = ctx.getImageData(
-            0,
-            0,
-            c.width,
-            c.height
+          const img = document.querySelector(
+            '.relay-img'
+          ) as HTMLImageElement | null
+          return (
+            img !== null &&
+            img.complete &&
+            img.naturalWidth > 0
           )
-          // Count non-zero pixels - means something rendered
-          let nonZero = 0
-          for (
-            let i = 0;
-            i < data.data.length;
-            i += 4
-          ) {
-            if (
-              data.data[i] !== 0 ||
-              data.data[i + 1] !== 0 ||
-              data.data[i + 2] !== 0
-            ) {
-              nonZero++
-            }
-          }
-          return nonZero
-        }
+        },
+        undefined,
+        { timeout: 10_000 }
       )
 
-      expect(canvasFramesA).toBeGreaterThan(100)
+      const imgOk = await pageA.evaluate(() => {
+        const img = document.querySelector(
+          '.relay-img'
+        ) as HTMLImageElement | null
+        return {
+          exists: img !== null,
+          width: img?.naturalWidth ?? 0,
+          height: img?.naturalHeight ?? 0,
+        }
+      })
+      expect(imgOk.exists).toBe(true)
+      expect(imgOk.width).toBeGreaterThan(0)
+      expect(imgOk.height).toBeGreaterThan(0)
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
+
+  test(
+    'video canvas fits container with correct aspect ratio',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const url = `${APP_URL}/room/${roomId}?forceRelay=1`
+
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1200, height: 700 },
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 1200, height: 700 },
+      })
+
+      const pageA = await ctxA.newPage()
+      const pageB = await ctxB.newPage()
+
+      await pageA.goto(url, { waitUntil: 'domcontentloaded' })
+      await pageB.goto(url, { waitUntil: 'domcontentloaded' })
+
+      await waitForLog(pageA, 'Relay receiver ready', 15_000)
+
+      await pageA.waitForFunction(
+        () => {
+          const img = document.querySelector(
+            '.relay-img'
+          ) as HTMLImageElement | null
+          return (
+            img !== null &&
+            img.naturalWidth > 0 &&
+            img.naturalHeight > 0
+          )
+        },
+        undefined,
+        { timeout: 10_000 }
+      )
+
+      const dims = await pageA.evaluate(() => {
+        const img = document.querySelector(
+          '.relay-img'
+        ) as HTMLImageElement | null
+        const container = document.querySelector(
+          '.remote-peer'
+        ) as HTMLElement | null
+        if (!img || !container) return null
+        const iRect = img.getBoundingClientRect()
+        const cRect = container.getBoundingClientRect()
+        // Compute displayed image box with object-fit: contain
+        const iAR = img.naturalWidth / img.naturalHeight
+        const bAR = iRect.width / iRect.height
+        let displayW: number
+        let displayH: number
+        if (iAR > bAR) {
+          displayW = iRect.width
+          displayH = iRect.width / iAR
+        } else {
+          displayH = iRect.height
+          displayW = iRect.height * iAR
+        }
+        return {
+          intrinsicW: img.naturalWidth,
+          intrinsicH: img.naturalHeight,
+          displayW,
+          displayH,
+          containerW: cRect.width,
+          containerH: cRect.height,
+        }
+      })
+
+      expect(dims).not.toBeNull()
+      if (!dims) throw new Error('dims null')
+
+      // Canvas fills container on at least one dimension
+      const fitsWidth = dims.displayW <= dims.containerW + 1
+      const fitsHeight = dims.displayH <= dims.containerH + 1
+      expect(fitsWidth && fitsHeight).toBe(true)
+
+      // Display aspect ratio matches intrinsic aspect ratio
+      const intrinsicAR = dims.intrinsicW / dims.intrinsicH
+      const displayAR = dims.displayW / dims.displayH
+      expect(Math.abs(intrinsicAR - displayAR)).toBeLessThan(0.05)
+
+      // Canvas uses significant portion of container
+      // (not tiny like the old 320x240 fixed canvas)
+      const coverage =
+        (dims.displayW * dims.displayH) /
+        (dims.containerW * dims.containerH)
+      expect(coverage).toBeGreaterThan(0.4)
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
+
+  test(
+    'video fits mobile viewport (360x640)',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const url = `${APP_URL}/room/${roomId}?forceRelay=1`
+
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 360, height: 640 },
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+        viewport: { width: 360, height: 640 },
+      })
+
+      const pageA = await ctxA.newPage()
+      const pageB = await ctxB.newPage()
+
+      await pageA.goto(url, { waitUntil: 'domcontentloaded' })
+      await pageB.goto(url, { waitUntil: 'domcontentloaded' })
+
+      await waitForLog(pageA, 'Relay receiver ready', 15_000)
+
+      await pageA.waitForFunction(
+        () => {
+          const img = document.querySelector(
+            '.relay-img'
+          ) as HTMLImageElement | null
+          return img !== null && img.naturalWidth > 0
+        },
+        undefined,
+        { timeout: 10_000 }
+      )
+
+      const dims = await pageA.evaluate(() => {
+        const img = document.querySelector(
+          '.relay-img'
+        ) as HTMLImageElement | null
+        const vpW = globalThis.innerWidth
+        const vpH = globalThis.innerHeight
+        if (!img) return null
+        const r = img.getBoundingClientRect()
+        return {
+          imgW: r.width,
+          imgH: r.height,
+          vpW,
+          vpH,
+        }
+      })
+
+      expect(dims).not.toBeNull()
+      if (!dims) throw new Error('dims null')
+
+      // Image must not exceed viewport
+      expect(dims.imgW).toBeLessThanOrEqual(dims.vpW + 1)
+      expect(dims.imgH).toBeLessThanOrEqual(dims.vpH + 1)
+      // Image must use most of viewport width
+      expect(dims.imgW).toBeGreaterThan(dims.vpW * 0.8)
 
       await ctxA.close()
       await ctxB.close()
