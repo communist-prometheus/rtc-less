@@ -30,6 +30,19 @@ const waitForLog = (
     { timeout }
   )
 
+const enterRoom = async (
+  page: import('@playwright/test').Page,
+  url: string,
+  nickname: string
+): Promise<void> => {
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  const input = page.locator('#nickname-input')
+  await input.waitFor({ state: 'visible', timeout: 10_000 })
+  await input.fill(nickname)
+  await page.locator('#nickname-submit').click({ force: true })
+  await page.locator('#nickname-dialog').waitFor({ state: 'hidden', timeout: 10_000 })
+}
+
 const getLogs = (
   page: import('@playwright/test').Page
 ) =>
@@ -56,17 +69,13 @@ test.describe('WS Media Relay Path', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(url, {
-        waitUntil: 'domcontentloaded',
-      })
+      await enterRoom(pageA, url, 'Alice')
       await waitForLog(
         pageA,
         'Signaling connected'
       )
 
-      await pageB.goto(url, {
-        waitUntil: 'domcontentloaded',
-      })
+      await enterRoom(pageB, url, 'Bob')
       await waitForLog(
         pageB,
         'Signaling connected'
@@ -150,8 +159,8 @@ test.describe('WS Media Relay Path', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(url, { waitUntil: 'domcontentloaded' })
-      await pageB.goto(url, { waitUntil: 'domcontentloaded' })
+      await enterRoom(pageA, url, 'Alice')
+      await enterRoom(pageB, url, 'Bob')
 
       await waitForLog(pageA, 'Relay receiver ready', 15_000)
 
@@ -245,8 +254,8 @@ test.describe('WS Media Relay Path', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(url, { waitUntil: 'domcontentloaded' })
-      await pageB.goto(url, { waitUntil: 'domcontentloaded' })
+      await enterRoom(pageA, url, 'Alice')
+      await enterRoom(pageB, url, 'Bob')
 
       await waitForLog(pageA, 'Relay receiver ready', 15_000)
 
@@ -322,12 +331,8 @@ test.describe('WS Media Relay Path', () => {
         }
       })
 
-      await pageA.goto(url, {
-        waitUntil: 'domcontentloaded',
-      })
-      await pageB.goto(url, {
-        waitUntil: 'domcontentloaded',
-      })
+      await enterRoom(pageA, url, 'Alice')
+      await enterRoom(pageB, url, 'Bob')
 
       await waitForLog(pageA, 'Relay active')
       await waitForLog(pageB, 'Relay active')

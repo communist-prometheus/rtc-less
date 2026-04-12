@@ -33,6 +33,21 @@ const waitForLog = (
     { timeout }
   )
 
+const enterRoom = async (
+  page: import('@playwright/test').Page,
+  url: string,
+  nickname: string
+): Promise<void> => {
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  const input = page.locator('#nickname-input')
+  await input.waitFor({ state: 'visible', timeout: 10_000 })
+  await input.fill(nickname)
+  await page.locator('#nickname-submit').click({ force: true })
+  await page
+    .locator('#nickname-dialog')
+    .waitFor({ state: 'hidden', timeout: 10_000 })
+}
+
 test.describe('WebRTC Video Call', () => {
   test(
     'two peers connect with ICE connected',
@@ -50,14 +65,10 @@ test.describe('WebRTC Video Call', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageA, roomUrl, 'Alice')
       await waitForLog(pageA, 'Signaling connected')
 
-      await pageB.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageB, roomUrl, 'Bob')
       await waitForLog(pageB, 'Signaling connected')
 
       await waitForLog(pageB, 'Offer sent to')
@@ -110,9 +121,7 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const pageA = await ctxA.newPage()
-      await pageA.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageA, roomUrl, 'Alice')
       await waitForLog(
         pageA,
         'Signaling connected'
@@ -122,9 +131,7 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const pageB = await ctxB.newPage()
-      await pageB.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageB, roomUrl, 'Bob')
 
       await waitForLog(pageA, 'joined')
 
@@ -154,17 +161,13 @@ test.describe('WebRTC Video Call', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageA, roomUrl, 'Alice')
       await waitForLog(
         pageA,
         'Signaling connected'
       )
 
-      await pageB.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageB, roomUrl, 'Bob')
       await waitForLog(pageA, 'joined')
 
       await pageB.close()
@@ -180,6 +183,55 @@ test.describe('WebRTC Video Call', () => {
   )
 
   test(
+    'nickname uniqueness: second peer with same name is rejected',
+    async ({ browser }) => {
+      const roomId = await createRoom()
+      const roomUrl = `${APP_URL}/room/${roomId}`
+
+      const ctxA = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+      const ctxB = await browser.newContext({
+        permissions: ['camera', 'microphone'],
+      })
+
+      const pageA = await ctxA.newPage()
+      await enterRoom(pageA, roomUrl, 'SharedName')
+      await waitForLog(pageA, 'Signaling connected')
+
+      const pageB = await ctxB.newPage()
+      await pageB.goto(roomUrl, {
+        waitUntil: 'domcontentloaded',
+      })
+      const input = pageB.locator('#nickname-input')
+      await input.waitFor({ state: 'visible' })
+      await input.fill('SharedName')
+      await pageB
+        .locator('#nickname-submit')
+        .click({ force: true })
+
+      // Error should appear
+      const error = pageB.locator('#nickname-error')
+      await expect(error).toBeVisible({
+        timeout: 5000,
+      })
+
+      // Fill different nickname and proceed
+      await input.fill('DifferentName')
+      await pageB
+        .locator('#nickname-submit')
+        .click({ force: true })
+      await pageB
+        .locator('#nickname-dialog')
+        .waitFor({ state: 'hidden' })
+      await waitForLog(pageB, 'Signaling connected')
+
+      await ctxA.close()
+      await ctxB.close()
+    }
+  )
+
+  test(
     'mute and camera toggle work',
     async ({ browser }) => {
       const roomId = await createRoom()
@@ -189,24 +241,38 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const page = await ctx.newPage()
-      await page.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(page, roomUrl, 'Tester')
       await waitForLog(page, 'Camera acquired')
 
       const micBtn = page.locator('#btn-mic')
-      await expect(micBtn).toHaveText('Mic On')
+      await expect(micBtn).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+      await expect(micBtn).toHaveAttribute(
+        'aria-label',
+        'Mute microphone'
+      )
       await micBtn.click({ force: true })
-      await expect(micBtn).toHaveText('Mic Off')
       await expect(micBtn).toHaveAttribute(
         'aria-pressed',
         'true'
       )
+      await expect(micBtn).toHaveAttribute(
+        'aria-label',
+        'Unmute microphone'
+      )
 
       const camBtn = page.locator('#btn-cam')
-      await expect(camBtn).toHaveText('Cam On')
+      await expect(camBtn).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
       await camBtn.click({ force: true })
-      await expect(camBtn).toHaveText('Cam Off')
+      await expect(camBtn).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
 
       await ctx.close()
     }
@@ -228,17 +294,13 @@ test.describe('WebRTC Video Call', () => {
       const pageA = await ctxA.newPage()
       const pageB = await ctxB.newPage()
 
-      await pageA.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageA, roomUrl, 'Alice')
       await waitForLog(
         pageA,
         'Signaling connected'
       )
 
-      await pageB.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(pageB, roomUrl, 'Bob')
       await waitForLog(
         pageB,
         'Signaling connected'
@@ -273,9 +335,7 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const page = await ctx.newPage()
-      await page.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(page, roomUrl, 'Tester')
       await waitForLog(
         page,
         'Signaling connected'
@@ -306,9 +366,7 @@ test.describe('WebRTC Video Call', () => {
         permissions: ['camera', 'microphone'],
       })
       const page = await ctx.newPage()
-      await page.goto(roomUrl, {
-        waitUntil: 'networkidle',
-      })
+      await enterRoom(page, roomUrl, 'Tester')
       await waitForLog(
         page,
         'Signaling connected'
