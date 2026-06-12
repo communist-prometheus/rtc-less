@@ -24,7 +24,7 @@
     "oxlint": "^0.16.0",
     "stylelint": "^16.0.0",
     "stylelint-config-standard": "^37.0.0",
-    "turbo": "^2.0.0",
+    "turbo": "^2.9.18",
     "typescript": "^5.9.3"
   }
 }
